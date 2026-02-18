@@ -17,10 +17,26 @@ export interface Exam {
   createdAt: string;
 }
 
+export interface MindMapNode {
+  id: string;
+  text: string;
+  children?: MindMapNode[];
+  description?: string;
+}
+
+export interface MindMap {
+  title: string;
+  root: MindMapNode;
+  createdAt: string;
+}
+
 export enum AppStatus {
   IDLE = 'IDLE',
   UPLOADING = 'UPLOADING',
   GENERATING = 'GENERATING',
-  SUCCESS = 'SUCCESS',
+  SUCCESS_EXAM = 'SUCCESS_EXAM',
+  SUCCESS_MINDMAP = 'SUCCESS_MINDMAP',
   ERROR = 'ERROR'
 }
+
+export type GenerationMode = 'EXAM' | 'MINDMAP';

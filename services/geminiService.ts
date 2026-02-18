@@ -1,45 +1,34 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Question, Exam } from "../types";
+import { Question, Exam, MindMap } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-const SYSTEM_INSTRUCTION = `
-Você é um oficial da Marinha do Brasil, especialista na elaboração de provas para o concurso QOAM (Quadro Auxiliar de Oficiais da Armada e Fuzileiros Navais).
-Sua tarefa é ler o conteúdo de um PDF fornecido e gerar um simulado de alta qualidade.
+const SYSTEM_INSTRUCTION_EXAM = `
+Você é um oficial da Marinha do Brasil, especialista na elaboração de provas para o concurso QOAM.
+Sua tarefa é ler o conteúdo de um PDF fornecido e gerar um simulado de alta qualidade no padrão da Marinha (5 opções, linguagem formal).
+`;
 
-Diretrizes para as questões:
-1. Siga rigorosamente o padrão da Marinha do Brasil: questões de múltipla escolha com 5 opções (A, B, C, D, E).
-2. Utilize linguagem formal, técnica e militar quando apropriado.
-3. Foque em detalhes importantes, legislação, história naval ou doutrina contida no texto.
-4. Evite questões óbvias ou "todas as anteriores".
-5. Forneça uma explicação pedagógica para a resposta correta.
-
-Retorne o resultado exclusivamente em formato JSON conforme o schema definido.
+const SYSTEM_INSTRUCTION_MINDMAP = `
+Você é um instrutor militar especializado em técnicas de memorização e planejamento estratégico. 
+Sua tarefa é analisar o PDF e criar uma estrutura de MAPA MENTAL lógica e hierárquica.
+Extraia os conceitos fundamentais, legislações, datas ou normas técnicas.
+Estruture como: Tópico Central -> Tópicos Principais -> Subtópicos -> Detalhes Importantes.
+Mantenha os textos curtos e objetivos.
 `;
 
 export const generateExamFromPDF = async (pdfBase64: string, numQuestions: number = 10): Promise<Exam> => {
   const model = 'gemini-3-flash-preview';
-  
   const response = await ai.models.generateContent({
     model,
-    contents: [
-      {
-        parts: [
-          {
-            inlineData: {
-              mimeType: "application/pdf",
-              data: pdfBase64,
-            },
-          },
-          {
-            text: `Gere um simulado com exatamente ${numQuestions} questões baseadas neste documento, seguindo o estilo do concurso QOAM da Marinha do Brasil.`,
-          },
-        ],
-      },
-    ],
+    contents: [{
+      parts: [
+        { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
+        { text: `Gere um simulado com exatamente ${numQuestions} questões baseadas neste documento.` }
+      ]
+    }],
     config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
+      systemInstruction: SYSTEM_INSTRUCTION_EXAM,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -57,10 +46,7 @@ export const generateExamFromPDF = async (pdfBase64: string, numQuestions: numbe
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
-                    properties: {
-                      label: { type: Type.STRING },
-                      text: { type: Type.STRING },
-                    },
+                    properties: { label: { type: Type.STRING }, text: { type: Type.STRING } },
                     required: ["label", "text"],
                   },
                 },
@@ -76,9 +62,63 @@ export const generateExamFromPDF = async (pdfBase64: string, numQuestions: numbe
     },
   });
 
-  const content = JSON.parse(response.text || '{}');
-  return {
-    ...content,
-    createdAt: new Date().toISOString(),
-  };
+  return { ...JSON.parse(response.text || '{}'), createdAt: new Date().toISOString() };
+};
+
+export const generateMindMapFromPDF = async (pdfBase64: string): Promise<MindMap> => {
+  const model = 'gemini-3-flash-preview';
+  const response = await ai.models.generateContent({
+    model,
+    contents: [{
+      parts: [
+        { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
+        { text: `Crie um mapa mental detalhado e estruturado deste documento para estudo militar.` }
+      ]
+    }],
+    config: {
+      systemInstruction: SYSTEM_INSTRUCTION_MINDMAP,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          root: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              text: { type: Type.STRING },
+              children: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.STRING },
+                    text: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    children: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          id: { type: Type.STRING },
+                          text: { type: Type.STRING },
+                          description: { type: Type.STRING }
+                        },
+                        required: ["id", "text"]
+                      }
+                    }
+                  },
+                  required: ["id", "text"]
+                }
+              }
+            },
+            required: ["id", "text"]
+          }
+        },
+        required: ["title", "root"]
+      }
+    }
+  });
+
+  return { ...JSON.parse(response.text || '{}'), createdAt: new Date().toISOString() };
 };
