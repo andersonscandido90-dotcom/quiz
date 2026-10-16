@@ -1,3 +1,9 @@
+import * as pdfjsLib from 'pdfjs-dist';
+// @ts-ignore
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
 export interface PdfExtractResult {
   text: string;
   totalPages: number;
@@ -14,13 +20,16 @@ export async function extractTextFromPdfInBrowser(
 ): Promise<PdfExtractResult> {
   const arrayBuffer = await file.arrayBuffer();
 
-  // @ts-ignore
-  const pdfjs = window.pdfjsLib;
-  if (!pdfjs) {
-    throw new Error('Mecanismo de leitura local não disponível. Envio alternativo ativado.');
+  // Ensure worker is always pointing to the bundled local worker
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
   }
 
-  const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(arrayBuffer),
+    useSystemFonts: true,
+  });
+
   const pdf = await loadingTask.promise;
   const totalDocPages = pdf.numPages;
 

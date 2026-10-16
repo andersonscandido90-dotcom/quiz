@@ -1,5 +1,6 @@
 import { Exam, MindMap, ProgressState } from '../types';
 import { GoogleGenAI, Type } from '@google/genai';
+import { extractTextFromPdfInBrowser } from './pdfExtractService';
 
 export const getStoredApiKey = (): string => {
   return (
@@ -36,32 +37,40 @@ Estrutura: Tópico Central -> Tópicos Principais -> Subtópicos -> Detalhes Cr�
 Mantenha os textos objetivos, claros e focados na aprovação.
 `;
 
-// Direct Client-Side Generation (Never fails with Vercel serverless errors!)
+// Helper to ask candidate for Gemini API key if running in static client mode (Vercel)
+function ensureApiKey(promptReason: string = ''): string {
+  let key = getStoredApiKey();
+  if (key) return key;
+
+  const msg = promptReason
+    ? `${promptReason}\n\nPara continuar gerando o simulado diretamente pelo seu navegador (gratuito e sem limite de servidor), insira sua chave do Google Gemini (API Key):`
+    : 'Insira sua chave gratuita do Google Gemini (Google AI Studio) para gerar o simulado diretamente no navegador:';
+
+  const inputKey = window.prompt(msg);
+  if (!inputKey || !inputKey.trim()) {
+    throw new Error('Chave de API do Gemini não informada. Clique no botão "Como Obter / Inserir Chave Gemini" no topo da página para configurar.');
+  }
+
+  saveStoredApiKey(inputKey.trim());
+  return inputKey.trim();
+}
+
+// Direct Client-Side Generation (Never fails with Vercel serverless errors or 404!)
 export async function generateExamClientSide(
   extractedText: string,
   fileName: string,
   totalPages: number,
   numQuestions: number,
-  onProgress: (state: ProgressState) => void
+  onProgress: (state: ProgressState) => void,
+  reason: string = ''
 ): Promise<Exam> {
-  let key = getStoredApiKey();
-  if (!key) {
-    const inputKey = window.prompt(
-      'Para executar o simulador com a IA do Gemini na Vercel sem limites de servidor, insira sua chave gratuita do Google AI Studio (Gemini API Key):'
-    );
-    if (!inputKey || !inputKey.trim()) {
-      throw new Error('Chave de API do Gemini não fornecida. Obtenha uma chave gratuita em https://aistudio.google.com');
-    }
-    key = inputKey.trim();
-    saveStoredApiKey(key);
-  }
-
+  const key = ensureApiKey(reason);
   const ai = new GoogleGenAI({ apiKey: key });
   const targetQuestions = Math.min(100, Math.max(5, numQuestions));
 
   onProgress({
     percent: 15,
-    message: 'Processamento local ativado. Conectando diretamente ao Gemini...',
+    message: 'Processamento local ativado no navegador. Conectando diretamente à IA do Gemini...',
     fileName,
     currentQuestions: 0,
     totalQuestions: targetQuestions
@@ -179,25 +188,15 @@ export async function generateMindMapClientSide(
   extractedText: string,
   fileName: string,
   totalPages: number,
-  onProgress: (state: ProgressState) => void
+  onProgress: (state: ProgressState) => void,
+  reason: string = ''
 ): Promise<MindMap> {
-  let key = getStoredApiKey();
-  if (!key) {
-    const inputKey = window.prompt(
-      'Para gerar o mapa mental na Vercel, insira sua chave gratuita do Google AI Studio (Gemini API Key):'
-    );
-    if (!inputKey || !inputKey.trim()) {
-      throw new Error('Chave de API do Gemini não fornecida.');
-    }
-    key = inputKey.trim();
-    saveStoredApiKey(key);
-  }
-
+  const key = ensureApiKey(reason);
   const ai = new GoogleGenAI({ apiKey: key });
 
   onProgress({
     percent: 30,
-    message: 'Processamento direto ativado. Mapeando hierarquias com a IA...',
+    message: 'Processamento direto no navegador ativado. Mapeando hierarquias com a IA...',
     fileName
   });
 
@@ -327,7 +326,7 @@ async function processSSEStream(
   return { exam: finalExam || undefined, mindMap: finalMindMap || undefined };
 }
 
-// Hybrid Generation: tries server first; if Vercel serverless fails/times out, seamlessly runs client-side!
+// Hybrid Generation: tries server first; if 404, 500, or Vercel serverless fails, seamlessly runs client-side!
 export const streamGenerateExamFromText = async (
   extractedText: string,
   fileName: string,
@@ -357,17 +356,15 @@ export const streamGenerateExamFromText = async (
 
     if (!response.ok) {
       const errText = await response.text();
-      // If Vercel FUNCTION_INVOCATION_FAILED or 504 / 404
-      if (
-        response.status === 404 ||
-        response.status === 500 ||
-        response.status === 504 ||
-        errText.includes('FUNCTION_INVOCATION_FAILED')
-      ) {
-        console.warn('Servidor Vercel indisponível, alternando automaticamente para execução local no navegador...');
-        return await generateExamClientSide(extractedText, fileName, totalPages, numQuestions, onProgress);
-      }
-      throw new Error(errText || `Erro no servidor: ${response.status}`);
+      console.warn(`Endpoint /api/generate-exam retornou status ${response.status}. Alternando para processamento direto no navegador...`);
+      return await generateExamClientSide(
+        extractedText,
+        fileName,
+        totalPages,
+        numQuestions,
+        onProgress,
+        `O servidor da Vercel retornou código ${response.status}.`
+      );
     }
 
     const { exam } = await processSSEStream(response, onProgress, fileName, numQuestions);
@@ -377,49 +374,51 @@ export const streamGenerateExamFromText = async (
     return exam;
   } catch (err: any) {
     const msg = err?.message || '';
-    if (msg.includes('FUNCTION_INVOCATION_FAILED') || msg.includes('Failed to fetch') || msg.includes('504')) {
-      console.warn('Erro de conexão com o servidor, alternando para o modo direto no navegador...');
-      return await generateExamClientSide(extractedText, fileName, totalPages, numQuestions, onProgress);
-    }
-    throw err;
+    console.warn('Erro de rede ou servidor ao chamar /api/generate-exam, alternando para o modo direto no navegador...', msg);
+    return await generateExamClientSide(
+      extractedText,
+      fileName,
+      totalPages,
+      numQuestions,
+      onProgress,
+      'Alternando para execução direta no navegador...'
+    );
   }
 };
 
-// Fallback upload of binary file with automatic local extraction and error fallback
+// Fallback upload of binary file with automatic client-side extraction if server is 404
 export const streamGenerateExamFromPDF = async (
   file: File,
   numQuestions: number,
   onProgress: (state: ProgressState) => void
 ): Promise<Exam> => {
-  // Always try in-browser extraction first because sending pure text is infinitely faster and avoids serverless body issues
+  onProgress({
+    percent: 5,
+    message: `Lendo e preparando arquivo (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`,
+    fileName: file.name,
+    totalQuestions: numQuestions,
+    currentQuestions: 0,
+  });
+
+  // Always attempt local browser extraction first for maximum reliability!
   try {
-    const { extractTextFromPdfInBrowser } = await import('./pdfExtractService');
-    const local = await extractTextFromPdfInBrowser(file, 1, 9999, (curr, tot) => {
-      onProgress({
-        percent: Math.min(20, Math.round((curr / tot) * 20)),
-        message: `Lendo páginas localmente (${curr} de ${tot})...`,
-        fileName: file.name,
-        totalQuestions: numQuestions,
-      });
-    });
-    if (local.text && local.text.length > 50) {
-      return await streamGenerateExamFromText(local.text, file.name, local.totalPages, numQuestions, onProgress);
+    const localResult = await extractTextFromPdfInBrowser(file, 1, 100);
+    if (localResult.text && localResult.text.length > 50) {
+      return await streamGenerateExamFromText(
+        localResult.text,
+        file.name,
+        localResult.totalPages,
+        numQuestions,
+        onProgress
+      );
     }
-  } catch (extractErr) {
-    console.warn('Extração preliminar pelo navegador não disponível, tentando envio direto...', extractErr);
+  } catch (e) {
+    console.warn('Extração local de texto pelo navegador falhou, tentando envio de arquivo para o servidor...', e);
   }
 
   const formData = new FormData();
   formData.append('file', file);
   formData.append('numQuestions', numQuestions.toString());
-
-  onProgress({
-    percent: 5,
-    message: `Enviando arquivo (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`,
-    fileName: file.name,
-    totalQuestions: numQuestions,
-    currentQuestions: 0,
-  });
 
   try {
     const response = await fetch('/api/generate-exam', {
@@ -428,22 +427,17 @@ export const streamGenerateExamFromPDF = async (
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      // If Vercel serverless body parsing issue or function failed
-      if (
-        response.status === 404 ||
-        response.status === 400 ||
-        response.status === 500 ||
-        response.status === 504 ||
-        errorText.includes('FUNCTION_INVOCATION_FAILED') ||
-        errorText.includes('Cannot destructure')
-      ) {
-        console.warn('Servidor retornou erro, ativando extração e geração local no navegador...');
-        const { extractTextFromPdfInBrowser } = await import('./pdfExtractService');
-        const local = await extractTextFromPdfInBrowser(file);
-        return await generateExamClientSide(local.text || 'Documento', file.name, local.totalPages, numQuestions, onProgress);
-      }
-      throw new Error(errorText || `Erro no servidor: ${response.status}`);
+      console.warn(`Envio de PDF para /api/generate-exam retornou status ${response.status}.`);
+      // Try local extraction as fallback
+      const localResult = await extractTextFromPdfInBrowser(file);
+      return await generateExamClientSide(
+        localResult.text,
+        file.name,
+        localResult.totalPages,
+        numQuestions,
+        onProgress,
+        `O servidor retornou status ${response.status}.`
+      );
     }
 
     const { exam } = await processSSEStream(response, onProgress, file.name, numQuestions);
@@ -452,14 +446,15 @@ export const streamGenerateExamFromPDF = async (
     }
     return exam;
   } catch (err: any) {
-    console.warn('Falha no envio do PDF, tentando geração direta no navegador...', err);
-    try {
-      const { extractTextFromPdfInBrowser } = await import('./pdfExtractService');
-      const local = await extractTextFromPdfInBrowser(file);
-      return await generateExamClientSide(local.text || 'Documento', file.name, local.totalPages, numQuestions, onProgress);
-    } catch (fallbackErr) {
-      throw err;
-    }
+    console.warn('Falha no upload do PDF, alternando para extração no navegador:', err);
+    const localResult = await extractTextFromPdfInBrowser(file);
+    return await generateExamClientSide(
+      localResult.text,
+      file.name,
+      localResult.totalPages,
+      numQuestions,
+      onProgress
+    );
   }
 };
 
@@ -483,24 +478,19 @@ export const streamGenerateMindMapFromText = async (
       body: JSON.stringify({
         extractedText,
         fileName,
-        totalPages,
+        totalPages
       }),
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      if (
-        response.status === 404 ||
-        response.status === 400 ||
-        response.status === 500 ||
-        response.status === 504 ||
-        errText.includes('FUNCTION_INVOCATION_FAILED') ||
-        errText.includes('Cannot destructure')
-      ) {
-        console.warn('Servidor Vercel indisponível, alternando para execução local no navegador...');
-        return await generateMindMapClientSide(extractedText, fileName, totalPages, onProgress);
-      }
-      throw new Error(errText || `Erro no servidor: ${response.status}`);
+      console.warn(`Endpoint /api/generate-mindmap retornou status ${response.status}. Alternando para processamento direto no navegador...`);
+      return await generateMindMapClientSide(
+        extractedText,
+        fileName,
+        totalPages,
+        onProgress,
+        `O servidor retornou código ${response.status}.`
+      );
     }
 
     const { mindMap } = await processSSEStream(response, onProgress, fileName);
@@ -509,17 +499,13 @@ export const streamGenerateMindMapFromText = async (
     }
     return mindMap;
   } catch (err: any) {
-    const msg = err?.message || '';
-    if (
-      msg.includes('FUNCTION_INVOCATION_FAILED') ||
-      msg.includes('Failed to fetch') ||
-      msg.includes('504') ||
-      msg.includes('Cannot destructure')
-    ) {
-      console.warn('Alternando para execução local no navegador...');
-      return await generateMindMapClientSide(extractedText, fileName, totalPages, onProgress);
-    }
-    throw err;
+    console.warn('Alternando para execução de mapa mental direto no navegador...');
+    return await generateMindMapClientSide(
+      extractedText,
+      fileName,
+      totalPages,
+      onProgress
+    );
   }
 };
 
@@ -528,24 +514,28 @@ export const streamGenerateMindMapFromPDF = async (
   file: File,
   onProgress: (state: ProgressState) => void
 ): Promise<MindMap> => {
+  onProgress({
+    percent: 5,
+    message: `Lendo arquivo (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`,
+    fileName: file.name,
+  });
+
   try {
-    const { extractTextFromPdfInBrowser } = await import('./pdfExtractService');
-    const local = await extractTextFromPdfInBrowser(file);
-    if (local.text && local.text.length > 50) {
-      return await streamGenerateMindMapFromText(local.text, file.name, local.totalPages, onProgress);
+    const localResult = await extractTextFromPdfInBrowser(file);
+    if (localResult.text && localResult.text.length > 50) {
+      return await streamGenerateMindMapFromText(
+        localResult.text,
+        file.name,
+        localResult.totalPages,
+        onProgress
+      );
     }
-  } catch (extractErr) {
-    console.warn('Extração preliminar pelo navegador não disponível, tentando envio direto...', extractErr);
+  } catch (e) {
+    console.warn('Extração local de texto para mapa mental falhou:', e);
   }
 
   const formData = new FormData();
   formData.append('file', file);
-
-  onProgress({
-    percent: 5,
-    message: `Enviando arquivo (${(file.size / (1024 * 1024)).toFixed(1)} MB)...`,
-    fileName: file.name,
-  });
 
   try {
     const response = await fetch('/api/generate-mindmap', {
@@ -554,20 +544,13 @@ export const streamGenerateMindMapFromPDF = async (
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      if (
-        response.status === 404 ||
-        response.status === 400 ||
-        response.status === 500 ||
-        response.status === 504 ||
-        errorText.includes('FUNCTION_INVOCATION_FAILED') ||
-        errorText.includes('Cannot destructure')
-      ) {
-        const { extractTextFromPdfInBrowser } = await import('./pdfExtractService');
-        const local = await extractTextFromPdfInBrowser(file);
-        return await generateMindMapClientSide(local.text || 'Documento', file.name, local.totalPages, onProgress);
-      }
-      throw new Error(errorText || `Erro no servidor: ${response.status}`);
+      const localResult = await extractTextFromPdfInBrowser(file);
+      return await generateMindMapClientSide(
+        localResult.text,
+        file.name,
+        localResult.totalPages,
+        onProgress
+      );
     }
 
     const { mindMap } = await processSSEStream(response, onProgress, file.name);
@@ -576,12 +559,12 @@ export const streamGenerateMindMapFromPDF = async (
     }
     return mindMap;
   } catch (err: any) {
-    try {
-      const { extractTextFromPdfInBrowser } = await import('./pdfExtractService');
-      const local = await extractTextFromPdfInBrowser(file);
-      return await generateMindMapClientSide(local.text || 'Documento', file.name, local.totalPages, onProgress);
-    } catch (fallbackErr) {
-      throw err;
-    }
+    const localResult = await extractTextFromPdfInBrowser(file);
+    return await generateMindMapClientSide(
+      localResult.text,
+      file.name,
+      localResult.totalPages,
+      onProgress
+    );
   }
 };
