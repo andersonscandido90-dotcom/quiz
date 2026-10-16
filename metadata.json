@@ -1,5 +1,8 @@
 {
   "name": "Simulador QOAM - Marinha do Brasil",
   "description": "Uma plataforma inteligente para transformar seus PDFs de estudo em simulados realistas para o concurso QOAM da Marinha do Brasil, utilizando a inteligência do Gemini.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
