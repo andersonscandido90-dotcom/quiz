@@ -41,7 +41,55 @@ const Node: React.FC<{ node: MindMapNode; level: number }> = ({ node, level }) =
 
 const MindMapView: React.FC<MindMapViewProps> = ({ mindMap, onReset }) => {
   const handlePrintPDF = () => {
-    window.print();
+    try {
+      window.print();
+    } catch (e) {
+      console.warn('window.print falhou:', e);
+      handleDownloadPrintableHTML();
+    }
+  };
+
+  const handleDownloadPrintableHTML = () => {
+    const content = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Mapa Mental - ${mindMap.title}</title>
+  <style>
+    body { font-family: 'Arial', sans-serif; margin: 30px; color: #111; line-height: 1.5; }
+    h1 { color: #002147; border-bottom: 3px solid #D4AF37; padding-bottom: 8px; text-transform: uppercase; font-size: 22px; }
+    h2 { color: #002147; margin-top: 24px; font-size: 18px; border-bottom: 1px solid #ddd; }
+    h3 { color: #1e3a8a; margin-top: 16px; font-size: 15px; }
+    h4 { color: #334155; margin-top: 12px; font-size: 13px; }
+    p { color: #475569; font-size: 13px; margin: 4px 0 8px; }
+    ul { list-style-type: square; padding-left: 20px; }
+    li { margin-bottom: 6px; }
+    .banner { background: #002147; color: white; padding: 12px; border-radius: 8px; margin-bottom: 25px; text-align: center; }
+    .btn-print { background: #D4AF37; color: #000; font-weight: bold; border: none; padding: 8px 18px; border-radius: 5px; cursor: pointer; font-size: 13px; margin-top: 5px; }
+    @media print { .banner { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <strong>Mapa Mental Estratégico QOAM - Marinha do Brasil</strong><br>
+    <button class="btn-print" onclick="window.print()">CLIQUE AQUI PARA IMPRIMIR OU SALVAR EM PDF</button>
+  </div>
+  <h1>${mindMap.title}</h1>
+  <p><strong>Gerado em:</strong> ${new Date(mindMap.createdAt).toLocaleDateString()} • Simulador Oficial QOAM</p>
+  <hr style="border: 0; border-top: 1px solid #ccc; margin-bottom: 20px;">
+  ${generateHierarchyHTML(mindMap.root, 0)}
+</body>
+</html>`;
+
+    const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Mapa_Mental_${mindMap.title.replace(/[^a-zA-Z0-9]/g, '_')}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const generateHierarchyHTML = (node: MindMapNode, level: number): string => {
@@ -105,17 +153,24 @@ const MindMapView: React.FC<MindMapViewProps> = ({ mindMap, onReset }) => {
         <div className="flex flex-wrap justify-center gap-2">
           <button 
             onClick={handlePrintPDF} 
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition flex items-center shadow-sm"
-            title="Salvar como PDF via sistema de impressão"
+            className="bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold px-4 py-2 rounded-md transition flex items-center shadow-sm"
+            title="Imprimir ou salvar como PDF"
           >
-            <i className="fa-solid fa-file-pdf mr-2"></i> Exportar PDF
+            <i className="fa-solid fa-print mr-2"></i> Imprimir
+          </button>
+          <button 
+            onClick={handleDownloadPrintableHTML} 
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition flex items-center shadow-sm"
+            title="Baixar arquivo formatado pronto para imprimir"
+          >
+            <i className="fa-solid fa-file-pdf mr-2"></i> Baixar HTML/PDF
           </button>
           <button 
             onClick={handleExportLibreOffice} 
             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition flex items-center shadow-sm"
             title="Exportar estrutura para LibreOffice Writer ou Word"
           >
-            <i className="fa-solid fa-file-word mr-2"></i> Exportar LibreOffice
+            <i className="fa-solid fa-file-word mr-2"></i> Exportar Word / LibreOffice
           </button>
           <button 
             onClick={onReset} 

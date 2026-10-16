@@ -1,4 +1,3 @@
-
 export interface Question {
   id: number;
   statement: string;
@@ -15,6 +14,9 @@ export interface Exam {
   category: string;
   questions: Question[];
   createdAt: string;
+  totalPages?: number;
+  fileSizeFormatted?: string;
+  fileName?: string;
 }
 
 export interface MindMapNode {
@@ -28,11 +30,14 @@ export interface MindMap {
   title: string;
   root: MindMapNode;
   createdAt: string;
+  totalPages?: number;
+  fileName?: string;
 }
 
 export enum AppStatus {
   IDLE = 'IDLE',
   UPLOADING = 'UPLOADING',
+  EXTRACTING = 'EXTRACTING',
   GENERATING = 'GENERATING',
   SUCCESS_EXAM = 'SUCCESS_EXAM',
   SUCCESS_MINDMAP = 'SUCCESS_MINDMAP',
@@ -40,3 +45,14 @@ export enum AppStatus {
 }
 
 export type GenerationMode = 'EXAM' | 'MINDMAP';
+
+export interface ProgressState {
+  percent: number;
+  message: string;
+  batch?: number;
+  totalBatches?: number;
+  currentQuestions?: number;
+  totalQuestions?: number;
+  fileName?: string;
+  fileSizeFormatted?: string;
+}
