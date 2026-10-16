@@ -121,9 +121,25 @@ const App: React.FC = () => {
         return;
       }
       docTitle = selectedFile.name;
-      docPages = extractedData?.totalPages || 1;
-      if (extractedData?.text && extractedData.text.length > 80) {
-        contentText = extractedData.text;
+
+      let currentData = extractedData;
+      if (!currentData || !currentData.text) {
+        setIsExtractingLocal(true);
+        try {
+          const start = usePageRange ? (parseInt(startPageInput, 10) || 1) : 1;
+          const end = usePageRange && endPageInput ? parseInt(endPageInput, 10) : undefined;
+          currentData = await extractTextFromPdfInBrowser(selectedFile, start, end);
+          setExtractedData(currentData);
+        } catch (e) {
+          console.warn('Extração preliminar:', e);
+        } finally {
+          setIsExtractingLocal(false);
+        }
+      }
+
+      docPages = currentData?.totalPages || 1;
+      if (currentData?.text && currentData.text.length > 20) {
+        contentText = currentData.text;
       }
     }
 

@@ -147,11 +147,24 @@ function getBatchTextSegment(fullText: string, batchIndex: number, totalBatches:
   return `--- INTRODUÇÃO E ESTRUTURA GERAL DO DOCUMENTO ---\n${intro}\n\n--- SEÇÃO ESPECÍFICA DO DOCUMENTO PARA ESTE LOTE (Parte ${batchIndex + 1} de ${totalBatches}) ---\n${segmentContent}\n--- FIM DO SEGMENTO ---`;
 }
 
+function parseSafeBody(body: any): any {
+  if (typeof body === 'object' && body !== null) return body;
+  if (typeof body === 'string') {
+    try {
+      return JSON.parse(body);
+    } catch (e) {
+      return {};
+    }
+  }
+  return {};
+}
+
 // Endpoint: Generate Exam with SSE Progress Stream
 // Supports BOTH JSON extracted text (ultrafast, no file upload lag!) AND multipart file upload
 app.post('/api/generate-exam', upload.single('file'), async (req: Request, res: Response) => {
+  const body = parseSafeBody(req.body);
   const hasFile = !!req.file;
-  const hasText = !!req.body.extractedText && typeof req.body.extractedText === 'string' && req.body.extractedText.trim().length > 0;
+  const hasText = !!body.extractedText && typeof body.extractedText === 'string' && body.extractedText.trim().length > 0;
 
   if (!hasFile && !hasText) {
     res.status(400).json({ error: 'Nenhum arquivo ou texto foi enviado.' });
@@ -173,16 +186,16 @@ app.post('/api/generate-exam', upload.single('file'), async (req: Request, res: 
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  const targetQuestions = Math.min(100, Math.max(5, parseInt(req.body.numQuestions, 10) || 10));
-  const fileName = req.body.fileName || req.file?.originalname || 'documento.pdf';
-  const fileSizeFormatted = req.file ? formatFileSize(req.file.size) : (req.body.fileSizeFormatted || 'Texto direto');
+  const targetQuestions = Math.min(100, Math.max(5, parseInt(body.numQuestions, 10) || 10));
+  const fileName = body.fileName || req.file?.originalname || 'documento.pdf';
+  const fileSizeFormatted = req.file ? formatFileSize(req.file.size) : (body.fileSizeFormatted || 'Texto direto');
 
   try {
     let extractedText = '';
-    let totalPages = parseInt(req.body.totalPages, 10) || 1;
+    let totalPages = parseInt(body.totalPages, 10) || 1;
 
     if (hasText) {
-      extractedText = req.body.extractedText.trim();
+      extractedText = body.extractedText.trim();
       sendSSE({
         type: 'progress',
         percent: 15,
@@ -426,8 +439,9 @@ Instruções:
 
 // Endpoint: Generate Mind Map with SSE Progress Stream
 app.post('/api/generate-mindmap', upload.single('file'), async (req: Request, res: Response) => {
+  const body = parseSafeBody(req.body);
   const hasFile = !!req.file;
-  const hasText = !!req.body.extractedText && typeof req.body.extractedText === 'string' && req.body.extractedText.trim().length > 0;
+  const hasText = !!body.extractedText && typeof body.extractedText === 'string' && body.extractedText.trim().length > 0;
 
   if (!hasFile && !hasText) {
     res.status(400).json({ error: 'Nenhum arquivo ou texto foi enviado.' });
@@ -447,15 +461,15 @@ app.post('/api/generate-mindmap', upload.single('file'), async (req: Request, re
     res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
 
-  const fileName = req.body.fileName || req.file?.originalname || 'documento.pdf';
-  const fileSizeFormatted = req.file ? formatFileSize(req.file.size) : (req.body.fileSizeFormatted || 'Texto direto');
+  const fileName = body.fileName || req.file?.originalname || 'documento.pdf';
+  const fileSizeFormatted = req.file ? formatFileSize(req.file.size) : (body.fileSizeFormatted || 'Texto direto');
 
   try {
     let extractedText = '';
-    let totalPages = parseInt(req.body.totalPages, 10) || 1;
+    let totalPages = parseInt(body.totalPages, 10) || 1;
 
     if (hasText) {
-      extractedText = req.body.extractedText.trim();
+      extractedText = body.extractedText.trim();
       sendSSE({
         type: 'progress',
         percent: 25,

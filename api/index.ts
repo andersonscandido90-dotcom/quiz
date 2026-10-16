@@ -1,8 +1,14 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
+import multer from 'multer';
 
 const app = express();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -50,19 +56,46 @@ async function generateWithRetry(params: any): Promise<any> {
   throw lastErr;
 }
 
-// Handler for Generate Exam
-app.post('/api/generate-exam', async (req: Request, res: Response) => {
-  try {
-    const { extractedText, fileName, totalPages, numQuestions } = req.body;
+function parseSafeBody(body: any): any {
+  if (typeof body === 'object' && body !== null) return body;
+  if (typeof body === 'string') {
+    try {
+      return JSON.parse(body);
+    } catch (e) {
+      return {};
+    }
+  }
+  return {};
+}
 
-    if (!extractedText || typeof extractedText !== 'string' || extractedText.trim().length === 0) {
-      res.status(400).json({ error: 'Nenhum texto foi enviado para elaboração das questões.' });
+// Handler for Generate Exam (Supports JSON body and multipart upload without crashing)
+app.post('/api/generate-exam', upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    const body = parseSafeBody(req.body);
+    let extractedText = (body.extractedText || '').toString().trim();
+    const fileName = body.fileName || req.file?.originalname || 'documento.pdf';
+    const totalPages = parseInt(body.totalPages, 10) || 1;
+    const numQuestions = Math.min(100, Math.max(5, parseInt(body.numQuestions, 10) || 10));
+
+    // If text was not sent in body, try to extract basic string from buffer if available
+    if (!extractedText && req.file?.buffer) {
+      const raw = req.file.buffer.toString('utf-8');
+      const clean = raw.replace(/[^\x20-\x7E\xC0-\xFF\n\r\t]/g, ' ').replace(/\s+/g, ' ');
+      if (clean.length > 200) {
+        extractedText = clean;
+      }
+    }
+
+    if (!extractedText) {
+      res.status(400).json({
+        error: 'Nenhum texto foi recebido para a elaboração do simulado. Aguarde a leitura do PDF pelo navegador ou utilize a aba "Colar Texto / Norma".'
+      });
       return;
     }
 
     if (!apiKey) {
       res.status(500).json({
-        error: 'Chave GEMINI_API_KEY não configurada nas variáveis de ambiente da Vercel.'
+        error: 'Chave GEMINI_API_KEY não configurada nas variáveis da Vercel. Por favor, insira sua chave no botão do topo da página.'
       });
       return;
     }
@@ -76,22 +109,19 @@ app.post('/api/generate-exam', async (req: Request, res: Response) => {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    const targetQuestions = Math.min(100, Math.max(5, parseInt(numQuestions, 10) || 10));
-    const title = fileName || 'Simulado QOAM - Marinha do Brasil';
-
     sendSSE({
       type: 'progress',
       percent: 20,
-      message: `Iniciando elaboração na Vercel (${targetQuestions} questões)...`,
-      fileName: title,
+      message: `Iniciando elaboração na Vercel (${numQuestions} questões)...`,
+      fileName,
       currentQuestions: 0,
-      totalQuestions: targetQuestions
+      totalQuestions: numQuestions
     });
 
     const response = await generateWithRetry({
       contents: [
         { text: `--- DOCUMENTO DE ESTUDO ---\n${extractedText.slice(0, 75000)}\n--- FIM DO DOCUMENTO ---` },
-        { text: `Elabore EXATAMENTE ${targetQuestions} questões inéditas no padrão militar da Marinha do Brasil para o concurso QOAM, com 5 opções (A, B, C, D, E) e gabarito comentado.` }
+        { text: `Elabore EXATAMENTE ${numQuestions} questões inéditas no padrão militar da Marinha do Brasil para o concurso QOAM, com 5 opções (A, B, C, D, E) e gabarito comentado.` }
       ],
       config: {
         systemInstruction: SYSTEM_INSTRUCTION_EXAM,
@@ -142,18 +172,18 @@ app.post('/api/generate-exam', async (req: Request, res: Response) => {
       percent: 100,
       message: 'Simulado concluído!',
       currentQuestions: questions.length,
-      totalQuestions: targetQuestions
+      totalQuestions: numQuestions
     });
 
     sendSSE({
       type: 'complete',
       exam: {
-        title: parsed.title || title,
+        title: parsed.title || fileName,
         category: parsed.category || 'Conhecimentos Militares QOAM',
         questions,
         createdAt: new Date().toISOString(),
-        totalPages: totalPages || 1,
-        fileName: title
+        totalPages,
+        fileName
       }
     });
 
@@ -170,18 +200,29 @@ app.post('/api/generate-exam', async (req: Request, res: Response) => {
 });
 
 // Handler for Generate Mindmap
-app.post('/api/generate-mindmap', async (req: Request, res: Response) => {
+app.post('/api/generate-mindmap', upload.single('file'), async (req: Request, res: Response) => {
   try {
-    const { extractedText, fileName, totalPages } = req.body;
+    const body = parseSafeBody(req.body);
+    let extractedText = (body.extractedText || '').toString().trim();
+    const fileName = body.fileName || req.file?.originalname || 'documento.pdf';
+    const totalPages = parseInt(body.totalPages, 10) || 1;
 
-    if (!extractedText || typeof extractedText !== 'string' || extractedText.trim().length === 0) {
-      res.status(400).json({ error: 'Nenhum texto foi enviado para o mapa mental.' });
+    if (!extractedText && req.file?.buffer) {
+      const raw = req.file.buffer.toString('utf-8');
+      const clean = raw.replace(/[^\x20-\x7E\xC0-\xFF\n\r\t]/g, ' ').replace(/\s+/g, ' ');
+      if (clean.length > 200) {
+        extractedText = clean;
+      }
+    }
+
+    if (!extractedText) {
+      res.status(400).json({ error: 'Nenhum texto foi recebido para a geração do mapa mental.' });
       return;
     }
 
     if (!apiKey) {
       res.status(500).json({
-        error: 'Chave GEMINI_API_KEY não configurada nas variáveis de ambiente da Vercel.'
+        error: 'Chave GEMINI_API_KEY não configurada nas variáveis da Vercel.'
       });
       return;
     }
@@ -195,13 +236,11 @@ app.post('/api/generate-mindmap', async (req: Request, res: Response) => {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    const title = fileName || 'Mapa Mental QOAM';
-
     sendSSE({
       type: 'progress',
       percent: 30,
       message: 'Estruturando tópicos no servidor Vercel...',
-      fileName: title
+      fileName
     });
 
     const response = await generateWithRetry({
@@ -267,8 +306,8 @@ app.post('/api/generate-mindmap', async (req: Request, res: Response) => {
       mindMap: {
         ...parsed,
         createdAt: new Date().toISOString(),
-        totalPages: totalPages || 1,
-        fileName: title
+        totalPages,
+        fileName
       }
     });
 
